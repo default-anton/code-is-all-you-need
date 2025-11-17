@@ -97,7 +97,20 @@ This mirrors the "Manual Agent Loop" pattern from the AI SDK documentation but s
 
 ## Sandbox Contract & Runtime
 
-Code blocks execute inside QuickJS (via quickjs-emscripten) with host functions wired directly into the VM. Each helper runs in Node.js, resolves a QuickJS promise, and pumps `runtime.executePendingJobs()` so `await` works naturally inside the sandbox.
+Code blocks execute inside QuickJS (via quickjs-emscripten) with host functions wired directly into the VM. Each helper runs in Node.js, resolves a QuickJS promise, and pumps `runtime.executePendingJobs()` so `await` works naturally inside the sandbox. The agent now behaves like a native to-do assistant, so the system prompt only advertises the following helpers:
+
+| Helper | Description |
+| --- | --- |
+| `sdk.createTodo(input)` | Create a todo `{ title, description?, done?, tags?, dueDate? }` and persist it to `data/todos.json`.
+| `sdk.getTodo(id)` | Load a single todo by id (returns `null` when missing).
+| `sdk.listTodos()` | Return every stored todo sorted by insertion order.
+| `sdk.updateTodo(id, patch)` | Merge partial fields into an existing todo and refresh `updatedAt`.
+| `sdk.deleteTodo(id)` | Remove a todo and return `true` when something was deleted.
+| `sdk.searchTodos(criteria)` | Filter todos by text/tag/done criteria.
+
+Each todo includes `{ id, title, description, done, tags[], dueDate|null, createdAt, updatedAt }` and lives in `data/todos.json` (directories are created on demand, so the filesystem doubles as our datastore).
+
+For local development we still expose the generic helpers below—they remain available to the sandbox but stay hidden from the agent so it focuses on task management:
 
 | Helper | Description |
 | --- | --- |
