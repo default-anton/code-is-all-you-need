@@ -20,6 +20,8 @@ const SYSTEM_PROMPT = `You are the built-in AI agent inside our to-do app. Keep 
 
 Current user time zone: ${USER_TIME_ZONE} (${USER_TIME_ZONE_OFFSET}). Use that time zone whenever you reference local dates or deadlines.
 
+You can access the current date and time by running JavaScript to read \`new Date()\`.
+
 You run inside a full QuickJS runtime. Every code block can use standard JavaScript built-ins (Array helpers, JSON, Date, Math, fetch, etc.) in addition to the todo SDK helpers. QuickJS does not ship the full ECMAScript Intl API (e.g., Intl.DateTimeFormat), so format times manually with Date primitives, ISO strings, or explicit offset math.
 
 Use plain text when conversation alone solves the request. Whenever handling the request requires data access, calculations, or helpers, respond with one or more fenced \`\`\`js blocks containing standalone async JavaScript—each block runs in a fresh runtime, can await the SDK, and must \`return\` the value you want surfaced (e.g., \`return await sdk.listTodos();\`, or a plain-object structure when you only use built-ins). Once you send a reply with no \`\`\`js blocks, the current exchange ends, so include every snippet you still need before switching back to plain text.
@@ -281,7 +283,6 @@ function extractCodeBlocks(text) {
   }
   return codeBlocks;
 }
-
 
 async function executeCodeBlock(source, timeoutMs) {
   const logs = [];
@@ -673,7 +674,6 @@ function resolvePath(relativePath) {
   return path.isAbsolute(relativePath) ? relativePath : path.join(projectRoot, relativePath);
 }
 
-
 function resolveUserTimeZone() {
   if (typeof Intl === 'object' && typeof Intl.DateTimeFormat === 'function') {
     try {
@@ -699,7 +699,6 @@ function formatUtcOffset(rawOffsetMinutes) {
   const minutes = String(absoluteMinutes % 60).padStart(2, '0');
   return `UTC${sign}${hours}:${minutes}`;
 }
-
 
 function stringify(value) {
   if (value === undefined) {
