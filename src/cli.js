@@ -14,12 +14,18 @@ const DEFAULT_MODEL = process.env.CODE_LOOP_MODEL ?? 'gpt-5.1-codex-mini';
 const DEFAULT_MAX_ITERATIONS = Number(process.env.CODE_LOOP_MAX_ITERATIONS ?? 12);
 const DEFAULT_EXEC_TIMEOUT = Number(process.env.CODE_LOOP_TIMEOUT_MS ?? 8000);
 
+const USER_TIME_ZONE = resolveUserTimeZone();
+const USER_TIME_ZONE_OFFSET = formatUtcOffset(new Date().getTimezoneOffset());
 const SYSTEM_PROMPT = `You are the built-in AI agent inside our to-do app. Keep guidance tight, pragmatic, and centered on helping the user plan and finish their tasks.
 
-Use plain text when conversation alone solves the request. Whenever handling the request requires calling the SDK (for data access or any helper), respond with one or more fenced \`\`\`js blocks containing standalone async JavaScript—each block runs in a fresh runtime, can await the SDK, and must \`return\` the value you want surfaced (e.g., \`return await sdk.listTodos();\`). Once you send a reply with no \`\`\`js blocks, the current exchange ends, so include every snippet you still need before switching back to plain text.
+Current user time zone: ${USER_TIME_ZONE} (${USER_TIME_ZONE_OFFSET}). Use that time zone whenever you reference local dates or deadlines.
+
+You run inside a full QuickJS runtime. Every code block can use standard JavaScript built-ins (Array helpers, JSON, Date, Math, fetch, etc.) in addition to the todo SDK helpers. QuickJS does not ship the full ECMAScript Intl API (e.g., Intl.DateTimeFormat), so format times manually with Date primitives, ISO strings, or explicit offset math.
+
+Use plain text when conversation alone solves the request. Whenever handling the request requires data access, calculations, or helpers, respond with one or more fenced \`\`\`js blocks containing standalone async JavaScript—each block runs in a fresh runtime, can await the SDK, and must \`return\` the value you want surfaced (e.g., \`return await sdk.listTodos();\`, or a plain-object structure when you only use built-ins). Once you send a reply with no \`\`\`js blocks, the current exchange ends, so include every snippet you still need before switching back to plain text.
 
 Important communication rules:
-1. Whenever you plan to call the SDK, start the reply with a concise plain-text explanation of what you will execute, then immediately include the required \`\`\`js block(s) in the same message—never promise code in one turn and send it later.
+1. Whenever you plan to call the SDK or run any JavaScript, start the reply with a concise plain-text explanation of what you will execute, then immediately include the required \`\`\`js block(s) in the same message—never promise code in one turn and send it later.
 2. Execution results for each code block are delivered to you as the next user message. After your code blocks, either end the reply or explicitly say you are waiting for results; only describe side effects once you have read the returned data in the following turn.
 
 Todo helpers on the global sdk object:
@@ -304,8 +310,12 @@ async function executeCodeBlock(source, timeoutMs) {
     }
 
     const promiseHandle = evalResult.value;
-    const settledResult = await withDeadline(vm.resolvePromise(promiseHandle), deadlineInfo, 'code execution');
-    promiseHandle.dispose();
+    let settledResult;
+    try {
+      settledResult = await withDeadline(vm.resolvePromise(promiseHandle), deadlineInfo, 'code execution');
+    } finally {
+      promiseHandle.dispose();
+    }
 
     if (settledResult.error) {
       const errorInfo = convertQuickjsError(vm, settledResult.error);
@@ -621,6 +631,33 @@ function resolvePath(relativePath) {
     return projectRoot;
   }
   return path.isAbsolute(relativePath) ? relativePath : path.join(projectRoot, relativePath);
+}
+
+
+function resolveUserTimeZone() {
+  if (typeof Intl === 'object' && typeof Intl.DateTimeFormat === 'function') {
+    try {
+      const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (typeof timeZone === 'string' && timeZone.length) {
+        return timeZone;
+      }
+    } catch {
+      // fall through to default
+    }
+  }
+  return 'UTC';
+}
+
+function formatUtcOffset(rawOffsetMinutes) {
+  if (!Number.isFinite(rawOffsetMinutes)) {
+    return 'UTC';
+  }
+  const offsetMinutes = -rawOffsetMinutes;
+  const sign = offsetMinutes >= 0 ? '+' : '-';
+  const absoluteMinutes = Math.abs(offsetMinutes);
+  const hours = String(Math.floor(absoluteMinutes / 60)).padStart(2, '0');
+  const minutes = String(absoluteMinutes % 60).padStart(2, '0');
+  return `UTC${sign}${hours}:${minutes}`;
 }
 
 
