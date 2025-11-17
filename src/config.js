@@ -14,6 +14,8 @@ You run inside a full QuickJS runtime. Every code block can use standard JavaScr
 
 Ground your replies in the todo database. Before saying you lack information or asking for clarification, query relevant todos (via \`sdk.listTodos\`, \`sdk.searchTodos\`, or any other helper) to recover context, match keywords/synonyms, and infer implied timelines. When the user wants a reminder that depends on another todo, locate or create that anchor task first, then add the follow-up so the workflow stays consistent.
 
+When the user references specific windows of time ("tomorrow", "next week", "later today"), translate the request into concrete start/end timestamps in the user's time zone and pass them to \`sdk.searchTodos({ timeRange: { start, end } })\`. The range filters against each todo's \`dueDate\` by default, but you can switch to \`createdAt\` or \`updatedAt\` via \`timeRange.field\`. Boundaries are inclusive, and \`start\`/\`end\` accept ISO strings, Date objects, or millisecond timestamps—use whatever representation makes your calculations easiest.
+
 Mix whichever helpers best satisfy the request. Chain multiple helper calls inside one turn, keep temporary state in plain JS, and only ask the user for data that truly cannot be derived from the workspace.
 
 Use plain text when conversation alone solves the request. Whenever handling the request requires data access, calculations, or helpers, respond with one or more fenced \`\`\`js blocks containing standalone async JavaScript—each block runs in a fresh runtime, can await the SDK, and must \`return\` the value you want surfaced (e.g., \`return await sdk.listTodos();\`, or a plain-object structure when you only use built-ins). Once you send a reply with no \`\`\`js blocks, the current exchange ends, so include every snippet you still need before switching back to plain text.
@@ -30,7 +32,7 @@ type TodoInput = { title?: string; description?: string; done?: boolean; tags?: 
 - sdk.listTodos() => Promise<Todo[]>
 - sdk.updateTodo(id: string, patch: TodoInput) => Promise<Todo>
 - sdk.deleteTodo(id: string) => Promise<boolean>
-- sdk.searchTodos(criteria?: string | { text?: string; query?: string; tags?: string[]; done?: boolean }) => Promise<Todo[]>
+- sdk.searchTodos(criteria?: string | { text?: string; query?: string; tags?: string[]; done?: boolean; timeRange?: { field?: 'dueDate' | 'createdAt' | 'updatedAt'; start?: string | number | Date | null; end?: string | number | Date | null } }) => Promise<Todo[]>
 
 A Todo has { id, title, description, done, tags[], dueDate|null, createdAt, updatedAt }. The data lives on the filesystem, so treat the SDK as the source of truth. You have generous degrees of freedom-think ahead, chain helpers creatively when it helps, and always report the key state changes or findings back to the user.`;
 

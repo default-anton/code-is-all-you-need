@@ -143,6 +143,7 @@ class AssistantStreamRenderer {
     this.outputText = '';
     this.activeSection = null;
     this.headerPrinted = false;
+    this.reasoningLineStart = true;
   }
 
   async render(stream) {
@@ -201,31 +202,43 @@ class AssistantStreamRenderer {
     const colorForLabel = label === 'Reasoning' ? theme.heading : theme.accent;
     this.target.write(`\n${colorForLabel(`--- ${label} ---`)}\n`);
     this.activeSection = label;
+    if (label === 'Reasoning') {
+      this.reasoningLineStart = true;
+    }
   }
 
   closeSection() {
     if (!this.activeSection) {
       return;
     }
+    if (this.activeSection === 'Reasoning') {
+      this.reasoningLineStart = true;
+    }
     this.target.write('\n');
     this.activeSection = null;
   }
 
   writeReasoningText(text) {
-    this.target.write(theme.reasoning(formatReasoningText(text)));
+    const normalized = text.replace(/\r\n/g, '\n');
+    let formatted = '';
+    for (const char of normalized) {
+      if (char === '\n') {
+        formatted += '\n';
+        this.reasoningLineStart = true;
+        continue;
+      }
+      if (this.reasoningLineStart) {
+        formatted += '  ';
+        this.reasoningLineStart = false;
+      }
+      formatted += char;
+    }
+    this.target.write(theme.reasoning(formatted));
   }
 
   writeResponseText(text) {
     this.target.write(text);
   }
-}
-
-function formatReasoningText(text) {
-  return text
-    .replace(/\r\n/g, '\n')
-    .split('\n')
-    .map((line) => (line.length ? `  ${line}` : ''))
-    .join('\n');
 }
 
 function coerceContentToText(content) {
