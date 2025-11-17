@@ -310,10 +310,12 @@ async function executeCodeBlock(source, timeoutMs) {
     }
 
     const promiseHandle = evalResult.value;
+    const stopJobPump = startQuickjsJobPump(vm);
     let settledResult;
     try {
       settledResult = await withDeadline(vm.resolvePromise(promiseHandle), deadlineInfo, 'code execution');
     } finally {
+      stopJobPump();
       promiseHandle.dispose();
     }
 
@@ -354,6 +356,44 @@ function wrapUserSource(source) {
 (async () => {
 ${source}
 })()`;
+}
+
+function startQuickjsJobPump(vm) {
+  const schedule = typeof setImmediate === 'function'
+    ? (fn) => setImmediate(fn)
+    : (fn) => setTimeout(fn, 0);
+  const cancel = typeof clearImmediate === 'function'
+    ? (handle) => clearImmediate(handle)
+    : (handle) => clearTimeout(handle);
+
+  let active = true;
+  let timer = null;
+
+  const tick = () => {
+    timer = null;
+    if (!active) {
+      return;
+    }
+    try {
+      vm.runtime.executePendingJobs();
+    } catch {
+      active = false;
+      return;
+    }
+    if (active) {
+      timer = schedule(tick);
+    }
+  };
+
+  tick();
+
+  return () => {
+    active = false;
+    if (timer !== null) {
+      cancel(timer);
+      timer = null;
+    }
+  };
 }
 
 async function loadQuickjsModule() {
