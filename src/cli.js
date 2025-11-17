@@ -24,19 +24,25 @@ You can access the current date and time by running JavaScript to read \`new Dat
 
 You run inside a full QuickJS runtime. Every code block can use standard JavaScript built-ins (Array helpers, JSON, Date, Math, fetch, etc.) in addition to the todo SDK helpers. QuickJS does not ship the full ECMAScript Intl API (e.g., Intl.DateTimeFormat), so format times manually with Date primitives, ISO strings, or explicit offset math.
 
+Ground your replies in the todo database. Before saying you lack information or asking for clarification, query relevant todos (via \`sdk.listTodos\`, \`sdk.searchTodos\`, or any other helper) to recover context, match keywords/synonyms, and infer implied timelines. When the user wants a reminder that depends on another todo, locate or create that anchor task first, then add the follow-up so the workflow stays consistent.
+
+Mix whichever helpers best satisfy the request. Chain multiple helper calls inside one turn, keep temporary state in plain JS, and only ask the user for data that truly cannot be derived from the workspace.
+
 Use plain text when conversation alone solves the request. Whenever handling the request requires data access, calculations, or helpers, respond with one or more fenced \`\`\`js blocks containing standalone async JavaScript—each block runs in a fresh runtime, can await the SDK, and must \`return\` the value you want surfaced (e.g., \`return await sdk.listTodos();\`, or a plain-object structure when you only use built-ins). Once you send a reply with no \`\`\`js blocks, the current exchange ends, so include every snippet you still need before switching back to plain text.
 
 Important communication rules:
 1. Whenever you plan to call the SDK or run any JavaScript, start the reply with a concise plain-text explanation of what you will execute, then immediately include the required \`\`\`js block(s) in the same message—never promise code in one turn and send it later.
 2. Execution results for each code block are delivered to you as the next user message. After your code blocks, either end the reply or explicitly say you are waiting for results; only describe side effects once you have read the returned data in the following turn.
 
-Todo helpers on the global sdk object:
-- sdk.createTodo(input) => Promise<Todo>
-- sdk.getTodo(id) => Promise<Todo | null>
+Todo helpers on the global sdk object (argument types shown for clarity):
+type TodoInput = { title?: string; description?: string; done?: boolean; tags?: string[]; dueDate?: string | Date | null };
+
+- sdk.createTodo(input?: TodoInput) => Promise<Todo>
+- sdk.getTodo(id: string) => Promise<Todo | null>
 - sdk.listTodos() => Promise<Todo[]>
-- sdk.updateTodo(id, patch) => Promise<Todo>
-- sdk.deleteTodo(id) => Promise<boolean>
-- sdk.searchTodos(criteria) => Promise<Todo[]>
+- sdk.updateTodo(id: string, patch: TodoInput) => Promise<Todo>
+- sdk.deleteTodo(id: string) => Promise<boolean>
+- sdk.searchTodos(criteria?: string | { text?: string; query?: string; tags?: string[]; done?: boolean }) => Promise<Todo[]>
 
 A Todo has { id, title, description, done, tags[], dueDate|null, createdAt, updatedAt }. The data lives on the filesystem, so treat the SDK as the source of truth. You have generous degrees of freedom-think ahead, chain helpers creatively when it helps, and always report the key state changes or findings back to the user.`;
 
@@ -122,6 +128,7 @@ class AgentSession {
       providerOptions: {
         openai: {
           reasoningEffort: this.options.reasoningEffort,
+          reasoningSummary: 'auto',
           verbosity: this.options.verbosity,
         },
       },
@@ -133,11 +140,35 @@ class AgentSession {
     let outputText = '';
     if (this.options.stream) {
       process.stdout.write('\nassistant> ');
+      let reasoningActive = false;
       for await (const chunk of result.fullStream) {
+        if (chunk.type === 'reasoning-start') {
+          reasoningActive = true;
+          process.stdout.write('\nReasoning: ');
+          continue;
+        }
+        if (chunk.type === 'reasoning-delta') {
+          if (!reasoningActive) {
+            reasoningActive = true;
+            process.stdout.write('\nReasoning: ');
+          }
+          process.stdout.write(chunk.text ?? '');
+          continue;
+        }
+        if (chunk.type === 'reasoning-end') {
+          if (reasoningActive) {
+            process.stdout.write('\n');
+            reasoningActive = false;
+          }
+          continue;
+        }
         if (chunk.type === 'text-delta') {
           process.stdout.write(chunk.text);
           outputText += chunk.text;
         }
+      }
+      if (reasoningActive) {
+        process.stdout.write('\n');
       }
       process.stdout.write('\n');
     }
