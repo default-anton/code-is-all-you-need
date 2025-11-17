@@ -46,6 +46,20 @@ type TodoInput = { title?: string; description?: string; done?: boolean; tags?: 
 
 A Todo has { id, title, description, done, tags[], dueDate|null, createdAt, updatedAt }. The data lives on the filesystem, so treat the SDK as the source of truth. You have generous degrees of freedom-think ahead, chain helpers creatively when it helps, and always report the key state changes or findings back to the user.`;
 
+const supportsAnsiColors = detectAnsiColorSupport();
+const theme = {
+  label: applyAnsiStyle('1;96'),
+  accent: applyAnsiStyle('36'),
+  heading: applyAnsiStyle('95'),
+  muted: applyAnsiStyle('90'),
+  success: applyAnsiStyle('92'),
+  warning: applyAnsiStyle('93'),
+  error: applyAnsiStyle('91'),
+  prompt: applyAnsiStyle('94'),
+  strong: applyAnsiStyle('97'),
+  reasoning: applyAnsiStyle('2;37'),
+};
+
 const projectRoot = process.cwd();
 const todoManager = createTodoManager({ withDeadline });
 let quickjsModulePromise = null;
@@ -98,7 +112,7 @@ class AgentSession {
 
       if (!codeBlocks.length) {
         if (!this.options.stream && outputText.trim()) {
-          console.log(`\nassistant> ${outputText.trim()}\n`);
+          console.log(`\n${theme.label('assistant>')} ${outputText.trim()}\n`);
         }
         if (this.options.prompt) {
           return { finishReason, iteration };
@@ -118,7 +132,7 @@ class AgentSession {
       }
     }
 
-    console.warn('Reached max iteration limit without receiving a plain-text reply.');
+    console.warn(theme.warning('Reached max iteration limit without receiving a plain-text reply.'));
   }
 
   async invokeModel() {
@@ -139,38 +153,8 @@ class AgentSession {
 
     let outputText = '';
     if (this.options.stream) {
-      process.stdout.write('\nassistant> ');
-      let reasoningActive = false;
-      for await (const chunk of result.fullStream) {
-        if (chunk.type === 'reasoning-start') {
-          reasoningActive = true;
-          process.stdout.write('\nReasoning: ');
-          continue;
-        }
-        if (chunk.type === 'reasoning-delta') {
-          if (!reasoningActive) {
-            reasoningActive = true;
-            process.stdout.write('\nReasoning: ');
-          }
-          process.stdout.write(chunk.text ?? '');
-          continue;
-        }
-        if (chunk.type === 'reasoning-end') {
-          if (reasoningActive) {
-            process.stdout.write('\n');
-            reasoningActive = false;
-          }
-          continue;
-        }
-        if (chunk.type === 'text-delta') {
-          process.stdout.write(chunk.text);
-          outputText += chunk.text;
-        }
-      }
-      if (reasoningActive) {
-        process.stdout.write('\n');
-      }
-      process.stdout.write('\n');
+      const renderer = new AssistantStreamRenderer(process.stdout);
+      outputText = await renderer.render(result.fullStream);
     }
 
     const responseMessages = (await result.response).messages;
@@ -250,7 +234,7 @@ function parseCliArgs(argv) {
         if (arg.startsWith('-')) {
           throw new Error(`Unknown flag: ${arg}`);
         }
-        console.warn(`Ignoring positional argument: ${arg}. Use --prompt/-p for single-shot mode.`);
+        console.warn(theme.warning(`Ignoring positional argument: ${arg}. Use --prompt/-p for single-shot mode.`));
         break;
     }
   }
@@ -264,26 +248,35 @@ function parseCliArgs(argv) {
 }
 
 function printHelp() {
-  console.log(`Usage: code-loop [options]\n\n` +
-    'Options:\n' +
-    '  -p, --prompt <text>         Run a single-shot prompt and exit when no more code blocks\n' +
-    '  --model <model>            Override the OpenAI model ID\n' +
-    '  --max-iterations <n>       Cap the agent loop iterations (default 12)\n' +
-    '  --timeout <ms>             Per-code-block execution timeout (default 8000)\n' +
-    '  --no-stream                Disable token streaming\n' +
-    '  --reasoning <level>        Set provider reasoning effort (default medium)\n' +
-    '  --verbosity <level>        Set provider verbosity hint (default medium)\n' +
-    '  --temperature <value>      Sampling temperature (default 0)\n' +
-    '  --max-output-tokens <n>    Upper bound for model tokens (default 1024)\n' +
-    '  -h, --help                 Show this message');
+  const rows = [
+    ['-p, --prompt <text>', 'Run a single-shot prompt and exit when no more code blocks'],
+    ['--model <model>', 'Override the OpenAI model ID'],
+    ['--max-iterations <n>', 'Cap the agent loop iterations (default 12)'],
+    ['--timeout <ms>', 'Per-code-block execution timeout (default 8000)'],
+    ['--no-stream', 'Disable token streaming'],
+    ['--reasoning <level>', 'Set provider reasoning effort (default medium)'],
+    ['--verbosity <level>', 'Set provider verbosity hint (default medium)'],
+    ['--temperature <value>', 'Sampling temperature (default 0)'],
+    ['--max-output-tokens <n>', 'Upper bound for model tokens (default 1024)'],
+    ['-h, --help', 'Show this message'],
+  ];
+
+  const flagWidth = rows.reduce((max, [flag]) => Math.max(max, flag.length), 0) + 2;
+
+  console.log(`${theme.heading('Usage:')} ${theme.strong('code-loop [options]')}\n`);
+  console.log(theme.heading('Options:'));
+  rows.forEach(([flag, description]) => {
+    console.log(`  ${theme.accent(flag.padEnd(flagWidth))}${description}`);
+  });
 }
 
 async function runInteractive(session) {
   const rl = readline.createInterface({ input: stdin, output: stdout });
-  console.log('Interactive mode. Type :exit to quit.');
+  console.log(`${theme.heading('Interactive mode.')} ${theme.muted('Type :exit to quit.')}`);
+  const promptLabel = `${theme.accent('you>')} `;
 
   while (true) {
-    const answer = await rl.question('you> ');
+    const answer = await rl.question(promptLabel);
     const trimmed = answer.trim();
     if (!trimmed) {
       continue;
@@ -295,7 +288,7 @@ async function runInteractive(session) {
     try {
       await session.submit(trimmed);
     } catch (error) {
-      console.error('Agent loop failed:', error);
+      console.error(theme.error('Agent loop failed:'), error);
     }
   }
 
@@ -765,23 +758,32 @@ function formatExecutionFeedback(result, blockIndex) {
 }
 
 function logExecution(result, blockIndex) {
+  const label = theme.label(`[code block ${blockIndex}]`);
+  const durationText = theme.muted(`${result.durationMs.toFixed(1)} ms`);
   if (result.success) {
-    console.log(`\n[code block ${blockIndex}] OK (${result.durationMs.toFixed(1)} ms)`);
+    console.log(`\n${label} ${theme.success('OK')} (${durationText})`);
     if (result.formattedValue) {
-      console.log(`return> ${result.formattedValue}`);
+      console.log(`${theme.success('return>')} ${result.formattedValue}`);
     }
   } else {
-    console.log(`\n[code block ${blockIndex}] ERROR (${result.durationMs.toFixed(1)} ms)`);
-    console.log(`message> ${result.errorMessage}`);
+    console.log(`\n${label} ${theme.error('ERROR')} (${durationText})`);
+    console.log(`${theme.error('message>')} ${result.errorMessage}`);
     if (result.errorStack) {
-      console.log(result.errorStack);
+      console.log(theme.muted(result.errorStack));
     }
   }
 
   if (result.logs.length) {
-    console.log('console>');
+    console.log(theme.heading('console>'));
+    const levelStyles = {
+      log: theme.muted,
+      info: theme.accent,
+      warn: theme.warning,
+      error: theme.error,
+    };
     result.logs.forEach((log) => {
-      console.log(`  [${log.level}] ${log.text}`);
+      const stylize = levelStyles[log.level] ?? theme.muted;
+      console.log(`  ${stylize(`[${log.level}]`)} ${log.text}`);
     });
   }
 }
@@ -815,10 +817,124 @@ function assertApiKey() {
   }
 }
 
+class AssistantStreamRenderer {
+  constructor(target) {
+    this.target = target;
+    this.outputText = '';
+    this.activeSection = null;
+    this.headerPrinted = false;
+  }
+
+  async render(stream) {
+    for await (const chunk of stream) {
+      this.handleChunk(chunk);
+    }
+    this.closeSection();
+    if (this.headerPrinted) {
+      this.target.write('\n');
+    }
+    return this.outputText;
+  }
+
+  handleChunk(chunk) {
+    switch (chunk.type) {
+      case 'reasoning-start':
+        this.openSection('Reasoning');
+        break;
+      case 'reasoning-delta':
+        if (chunk.text) {
+          this.openSection('Reasoning');
+          this.writeReasoningText(chunk.text);
+        }
+        break;
+      case 'reasoning-end':
+        if (this.activeSection === 'Reasoning') {
+          this.closeSection();
+        }
+        break;
+      case 'text-delta':
+        if (chunk.text) {
+          this.openSection('Response');
+          this.writeResponseText(chunk.text);
+          this.outputText += chunk.text;
+        }
+        break;
+      default:
+        break;
+    }
+  }
+
+  ensureAssistantHeader() {
+    if (this.headerPrinted) {
+      return;
+    }
+    this.target.write(`\n${theme.label('assistant>')}\n`);
+    this.headerPrinted = true;
+  }
+
+  openSection(label) {
+    this.ensureAssistantHeader();
+    if (this.activeSection === label) {
+      return;
+    }
+    this.closeSection();
+    const colorForLabel = label === 'Reasoning' ? theme.heading : theme.accent;
+    this.target.write(`\n${colorForLabel(`--- ${label} ---`)}\n`);
+    this.activeSection = label;
+  }
+
+  closeSection() {
+    if (!this.activeSection) {
+      return;
+    }
+    this.target.write('\n');
+    this.activeSection = null;
+  }
+
+  writeReasoningText(text) {
+    this.target.write(theme.reasoning(formatReasoningText(text)));
+  }
+
+  writeResponseText(text) {
+    this.target.write(text);
+  }
+}
+
+function formatReasoningText(text) {
+  return text
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => (line.length ? `  ${line}` : ''))
+    .join('\n');
+}
+
 function ensurePositiveInteger(value, fallback) {
   const parsed = Number(value);
   if (Number.isFinite(parsed) && parsed > 0) {
     return Math.floor(parsed);
   }
   return fallback;
+}
+
+function detectAnsiColorSupport() {
+  if ('NO_COLOR' in process.env) {
+    return false;
+  }
+  if ('FORCE_COLOR' in process.env && process.env.FORCE_COLOR !== '0') {
+    return true;
+  }
+  return Boolean(stdout?.isTTY);
+}
+
+function applyAnsiStyle(code) {
+  return (value) => {
+    const normalized = value == null ? '' : String(value);
+    if (!normalized) {
+      return '';
+    }
+    if (!supportsAnsiColors) {
+      return normalized;
+    }
+    return `\u001B[${code}m${normalized}\u001B[0m`;
+  };
 }
