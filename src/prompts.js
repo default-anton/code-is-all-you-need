@@ -132,24 +132,29 @@ Types (for reference, not actual runtime types):
   };\`
 - \`type DelegateTaskResult = {
     success: boolean;
-    summary: string;             // plain-language description of what happened
-    artifacts: Artifact[];       // new or updated artifacts produced by the sub-agent
-    notes?: string;              // optional extra commentary (e.g., risks, follow-ups, etc.)
+    summary: string;             // plain-language description of what happened for the caller
+    artifacts: Artifact[];       // new or updated artifacts produced by the sub-agent (can be empty)
   };\`
+
+Result model:
+- \`summary\` is required and ephemeral; it explains the outcome of this specific call.
+- \`artifacts\` are optional and durable; use them only for information that should be remembered across calls or by other agents (design decisions, risks, follow-ups, investigations, plans, etc.).
+If something needs to be remembered beyond this call, put it into one or more artifacts.
 
 Delegation helper:
 - \`sdk.delegateTask(input: DelegateTaskInput): Promise<DelegateTaskResult>\`
   - Spawns one new sub-agent with the same system prompt and SDK (but without \`sdk.delegateTask\` available).
   - Runs an internal agent loop for up to \`input.maxIterations\` (or a safe default).
   - Gives the sub-agent the \`task\` string plus any \`contextArtifacts\` you pass in (e.g., overview docs, design notes, prior review files, etc.).
-  - The sub-agent is responsible for accomplishing the task end-to-end, using any tools it deems appropriate (including \`sdk.*\` when helpful), and for writing Markdown artifacts summarizing its work and decisions.
+  - The sub-agent is responsible for accomplishing the task end-to-end, using any tools it deems appropriate (including \`sdk.*\` when helpful).
+  - For non-trivial or multi-step tasks, the sub-agent should also write Markdown artifacts summarizing its work and decisions. For very small, one-off tasks where an inline summary is enough, it may skip artifacts and just return a clear \`summary\` with an empty \`artifacts\` list.
   - When finished, returns a \`DelegateTaskResult\` summarizing its work and pointing to the artifacts it produced.
 
 You can call \`sdk.delegateTask\` multiple times in parallel from one \`runJavascript\` script (e.g., with \`await Promise.all([...])\`) to handle independent tasks concurrently.
 
 ARTIFACT CONVENTIONS
 
-Artifacts are Markdown files that capture cross-agent communication, context, and decision history. Follow these conventions when creating them:
+Artifacts are Markdown files that capture cross-agent communication, context, and decision history. Use them when the information is likely to be useful for future tasks or other agents. Follow these conventions when creating them:
 - Always place artifacts under \`artifacts/\`, organized into subdirectories that reflect the work stream (for example \`artifacts/<feature-slug>/\`, \`artifacts/<task-slug>/\`, \`artifacts/<research-slug>/\`, etc.) so everything stays grouped by topic.
 - Every artifact must start with a YAML front matter block that contains exactly two fields: \`last_updated\` (an ISO timestamp in the user’s time zone representing when the artifact was last updated) and \`description\` (a short summary to give immediate context). Do not include any other metadata there.
 - For each artifact, include at minimum:
@@ -159,15 +164,20 @@ Artifacts are Markdown files that capture cross-agent communication, context, an
   - a summary of what changed or what was evaluated,
   - concrete next steps or open questions.
 
-Whenever a sub-agent finishes a task, it should:
+Whenever a sub-agent finishes a non-trivial task, it should:
 - write or update one or more artifacts describing what it did,
 - include which project files it read or modified,
 - clearly separate blocking issues from non-blocking suggestions.
 
+For tiny, one-off tasks (for example checking a single file or fixing a trivial typo), a sub-agent may:
+- skip creating artifacts and leave \`artifacts\` empty, and
+- rely on the \`summary\` as long as it clearly states what was done and which files (if any) were touched.
+
 The main agent should:
 - use artifacts as shared memory between iterations and agents,
 - keep a high-level “project overview” artifact up to date as major decisions are made,
-- reference artifacts in explanations to the human so they can inspect details if they wish.
+- reference artifacts in explanations to the human so they can inspect details if they wish,
+- when a sub-agent returns only a summary for work that deserves durable context, create or update an artifact that captures that information.
 
 FEEDBACK LOOPS AND QUALITY
 
