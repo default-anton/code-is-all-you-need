@@ -2,7 +2,7 @@ import 'dotenv/config';
 import readline from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
 
-import { SYSTEM_PROMPT } from './config.js';
+import { SYSTEM_PROMPT } from './prompts.js';
 import { theme } from './ui/theme.js';
 import { parseCliArgs, printHelp } from './options.js';
 import { AgentSession } from './agent/session.js';
