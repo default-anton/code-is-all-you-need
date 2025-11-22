@@ -414,10 +414,10 @@ function stringify(value) {
   }
 }
 
-function formatExecutionFeedback(result, blockIndex) {
+function formatExecutionFeedback(result) {
   const header = result.success
-    ? `Execution result for block ${blockIndex} (Duration ${result.durationMs.toFixed(1)} ms)`
-    : `Execution error for block ${blockIndex} (Duration ${result.durationMs.toFixed(1)} ms)`;
+    ? `Execution result (Duration ${result.durationMs.toFixed(1)} ms)`
+    : `Execution error (Duration ${result.durationMs.toFixed(1)} ms)`;
 
   const consoleSection = result.logs.length
     ? result.logs.map((log) => `[${log.level}] ${log.text}`).join('\n')

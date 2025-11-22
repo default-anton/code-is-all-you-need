@@ -1,5 +1,6 @@
-import { streamText } from 'ai';
+import { streamText, tool } from 'ai';
 import { openai } from '@ai-sdk/openai';
+import { z } from 'zod';
 
 import { executeCodeBlock, formatExecutionFeedback } from '../runtime/quickjs-runner.js';
 import { theme } from '../ui/theme.js';
@@ -13,6 +14,9 @@ class AgentSession {
         content: options.systemPrompt,
       },
     ];
+    this.tools = {
+      runJavascript: createRunJavascriptTool(options),
+    };
   }
 
   async submit(text) {
@@ -28,28 +32,20 @@ class AgentSession {
     let iteration = 0;
     while (iteration < this.options.maxIterations) {
       iteration += 1;
-      const { outputText, finishReason, codeBlocks } = await this.invokeModel();
+      const { outputText, finishReason } = await this.invokeModel();
 
-      if (!codeBlocks.length) {
-        if (!this.options.stream && outputText.trim()) {
-          console.log(`\n${theme.label('assistant>')} ${outputText.trim()}\n`);
-        }
-        if (this.options.prompt) {
-          return { finishReason, iteration };
-        }
-        return;
+      if (!this.options.stream && outputText.trim()) {
+        console.log(`\n${theme.label('assistant>')} ${outputText.trim()}\n`);
       }
 
-      let blockIndex = 0;
-      for (const block of codeBlocks) {
-        blockIndex += 1;
-        const result = await executeCodeBlock(block, this.options.executionTimeoutMs);
-        logExecution(result, blockIndex);
-        this.messages.push({
-          role: 'user',
-          content: formatExecutionFeedback(result, blockIndex),
-        });
+      if (finishReason === 'tool-calls') {
+        continue;
       }
+
+      if (this.options.prompt) {
+        return { finishReason, iteration };
+      }
+      return;
     }
 
     console.warn(theme.warning('Reached max iteration limit without receiving a plain-text reply.'));
@@ -59,6 +55,7 @@ class AgentSession {
     const modelOptions = {
       model: openai(this.options.model),
       messages: this.messages,
+      tools: this.tools,
       providerOptions: {
         openai: {
           reasoningEffort: this.options.reasoningEffort,
@@ -88,34 +85,20 @@ class AgentSession {
     }
 
     const finishReason = await result.finishReason;
-    const codeBlocks = extractCodeBlocks(outputText);
-    return { outputText, finishReason, codeBlocks };
+    return { outputText, finishReason };
   }
 }
 
-function extractCodeBlocks(text) {
-  const codeBlocks = [];
-  const regex = /```(?:javascript|js|ts)?\s*([\s\S]*?)```/gi;
-  let match;
-  while ((match = regex.exec(text)) !== null) {
-    const body = match[1];
-    if (body && body.trim()) {
-      codeBlocks.push(body.trim());
-    }
-  }
-  return codeBlocks;
-}
-
-function logExecution(result, blockIndex) {
-  const label = theme.label(`[code block ${blockIndex}]`);
+function logExecution(result, label = 'runJavascript') {
+  const labelText = theme.label(`[${label}]`);
   const durationText = theme.muted(`${result.durationMs.toFixed(1)} ms`);
   if (result.success) {
-    console.log(`\n${label} ${theme.success('OK')} (${durationText})`);
+    console.log(`\n${labelText} ${theme.success('OK')} (${durationText})`);
     if (result.formattedValue) {
       console.log(`${theme.success('return>')} ${result.formattedValue}`);
     }
   } else {
-    console.log(`\n${label} ${theme.error('ERROR')} (${durationText})`);
+    console.log(`\n${labelText} ${theme.error('ERROR')} (${durationText})`);
     console.log(`${theme.error('message>')} ${result.errorMessage}`);
     if (result.errorStack) {
       console.log(theme.muted(result.errorStack));
@@ -180,6 +163,14 @@ class AssistantStreamRenderer {
           this.outputText += chunk.text;
         }
         break;
+      case 'tool-call':
+        this.openSection('Tool Call');
+        this.writeToolCall(chunk);
+        break;
+      case 'tool-error':
+        this.openSection('Tool Error');
+        this.writeToolError(chunk);
+        break;
       default:
         break;
     }
@@ -239,6 +230,18 @@ class AssistantStreamRenderer {
   writeResponseText(text) {
     this.target.write(text);
   }
+
+  writeToolCall(chunk) {
+    const header = `${theme.label('tool>')} ${theme.accent(chunk.toolName)} ${theme.muted(`#${chunk.toolCallId}`)}`;
+    this.target.write(`${header}\n`);
+    this.target.write(`\`\`\`js\n${chunk.input.code}\n\`\`\`\n`);
+  }
+
+  writeToolError(chunk) {
+    const header = `${theme.error('tool error>')} ${theme.accent(chunk.toolName)} ${theme.muted(`#${chunk.toolCallId}`)}`;
+    this.target.write(`${header}\n`);
+    this.target.write(`${formatJson(chunk)}\n`);
+  }
 }
 
 function coerceContentToText(content) {
@@ -262,6 +265,59 @@ function coerceContentToText(content) {
     return content.text;
   }
   return '';
+}
+
+function formatJson(value) {
+  if (value === undefined) {
+    return 'undefined';
+  }
+  if (typeof value === 'string') {
+    return value;
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch (error) {
+    return String(value);
+  }
+}
+
+function createRunJavascriptTool(options) {
+  return tool({
+    description: 'Execute JavaScript inside the project workspace using a sandboxed QuickJS runtime.',
+    inputSchema: z.object({
+      code: z.string().min(1, 'Provide code to execute.'),
+      timeoutMs: z.number().int().positive().optional(),
+    }),
+    outputSchema: z.object({
+      success: z.boolean(),
+      durationMs: z.number(),
+      logs: z.array(z.object({ level: z.string(), text: z.string() })),
+      formattedValue: z.string().nullable().optional(),
+      errorMessage: z.string().optional(),
+      errorStack: z.string().nullable().optional(),
+      feedback: z.string(),
+    }),
+    execute: async ({ code, timeoutMs }) => {
+      const effectiveTimeout = Number.isFinite(timeoutMs) && timeoutMs > 0
+        ? Math.floor(timeoutMs)
+        : options.executionTimeoutMs;
+
+      const result = await executeCodeBlock(code, effectiveTimeout);
+      logExecution(result);
+      const payload = {
+        success: result.success,
+        durationMs: result.durationMs,
+        logs: result.logs,
+        formattedValue: result.formattedValue ?? null,
+        feedback: formatExecutionFeedback(result),
+      };
+      if (!result.success) {
+        payload.errorMessage = result.errorMessage;
+        payload.errorStack = result.errorStack ?? null;
+      }
+      return payload;
+    },
+  });
 }
 
 export { AgentSession };

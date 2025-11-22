@@ -1,1 +1,1 @@
-Always read README.md first for an overview of this repository.
+- you can test the agent locally like so: `npm start -- --prompt 'list todos'`
