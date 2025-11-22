@@ -1,5 +1,5 @@
 const DEFAULT_MODEL = process.env.CODE_LOOP_MODEL ?? 'gpt-5.1-codex-mini';
-const DEFAULT_MAX_ITERATIONS = Number(process.env.CODE_LOOP_MAX_ITERATIONS ?? 12);
+const DEFAULT_MAX_ITERATIONS = Number(process.env.CODE_LOOP_MAX_ITERATIONS ?? 100);
 const DEFAULT_EXEC_TIMEOUT = Number(process.env.CODE_LOOP_TIMEOUT_MS ?? 300000); // 5 minutes
 
 export {

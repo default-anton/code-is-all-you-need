@@ -21,7 +21,7 @@ function parseCliArgs(argv) {
     executionTimeoutMs: DEFAULT_EXEC_TIMEOUT,
     stream: true,
     reasoningEffort: process.env.CODE_LOOP_REASONING ?? 'medium',
-    verbosity: process.env.CODE_LOOP_VERBOSITY ?? 'medium',
+    verbosity: process.env.CODE_LOOP_VERBOSITY ?? 'low',
     temperature: Number(process.env.CODE_LOOP_TEMPERATURE ?? 0),
     maxOutputTokens: Number(process.env.CODE_LOOP_MAX_OUTPUT ?? 1024),
     help: false,
