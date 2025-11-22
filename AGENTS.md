@@ -1,1 +1,1 @@
-- you can test the agent locally like so: `npm start -- --prompt 'list todos'`
+- you can test the agent locally like so: `npm start -- --prompt 'Your prompt here'`

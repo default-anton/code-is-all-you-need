@@ -177,6 +177,10 @@ function installSdk(vm, deadlineInfo, trackPendingOperation = () => {}) {
     return workspaceSdk.deletePath(maybePath, deadlineInfo);
   }, trackPendingOperation);
 
+  defineAsyncFunction(vm, sdkHandle, 'exec', async ([command, execOptions]) => {
+    return workspaceSdk.exec(command, execOptions, deadlineInfo);
+  }, trackPendingOperation);
+
   vm.setProp(vm.global, 'sdk', sdkHandle);
   sdkHandle.dispose();
 }

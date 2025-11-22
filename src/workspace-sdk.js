@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 
 function createWorkspaceSdk(options = {}) {
   const { workspaceRoot, withDeadline } = options;
@@ -107,12 +108,24 @@ function createWorkspaceSdk(options = {}) {
     return true;
   }
 
+  async function exec(command, options = {}, deadlineInfo) {
+    const commandText = requireCommandString(command);
+    const execOptions = normalizeExecOptions(options);
+    const absoluteCwd = resolveWithinWorkspace(execOptions.cwd);
+    await ensureWorkspaceRootExists(deadlineInfo);
+
+    const abortController = new AbortController();
+    const commandPromise = runShellCommand(commandText, absoluteCwd, execOptions.timeoutMs, abortController.signal);
+    return withDeadline(commandPromise, deadlineInfo, 'sdk.exec', { abortController });
+  }
+
   return {
     projectRoot: normalizedRoot,
     readFile,
     writeFile,
     listFiles,
     deletePath,
+    exec,
   };
 }
 
@@ -125,6 +138,144 @@ function stringify(value) {
   } catch (error) {
     return String(value);
   }
+}
+
+function requireCommandString(value) {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error('exec requires a non-empty command string.');
+  }
+  return value;
+}
+
+function normalizeExecOptions(options) {
+  if (options === undefined || options === null) {
+    return { cwd: '.', timeoutMs: null };
+  }
+  if (typeof options !== 'object') {
+    throw new Error('exec options must be an object.');
+  }
+
+  const cwdValue = typeof options.cwd === 'string' ? options.cwd.trim() : '';
+  const normalized = {
+    cwd: cwdValue.length ? cwdValue : '.',
+    timeoutMs: null,
+  };
+
+  if (options.timeoutMs !== undefined) {
+    const timeout = Number(options.timeoutMs);
+    if (!Number.isFinite(timeout) || timeout <= 0) {
+      throw new Error('exec timeoutMs must be a positive number if provided.');
+    }
+    normalized.timeoutMs = Math.floor(timeout);
+  }
+
+  return normalized;
+}
+
+function runShellCommand(command, cwd, timeoutMs = null, abortSignal) {
+  return new Promise((resolve, reject) => {
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    let timeoutId = null;
+    let killTimer = null;
+
+    const child = spawn(command, {
+      cwd,
+      shell: true,
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    const cleanup = () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+      if (killTimer) {
+        clearTimeout(killTimer);
+        killTimer = null;
+      }
+      if (abortSignal) {
+        abortSignal.removeEventListener('abort', handleAbort);
+      }
+    };
+
+    const settle = (handler) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      handler();
+    };
+
+    const killChild = () => {
+      if (child.killed) {
+        return;
+      }
+      child.kill('SIGTERM');
+      killTimer = setTimeout(() => {
+        if (!child.killed) {
+          child.kill('SIGKILL');
+        }
+      }, 1000);
+      if (killTimer && typeof killTimer.unref === 'function') {
+        killTimer.unref();
+      }
+    };
+
+    const handleAbort = () => {
+      killChild();
+    };
+
+    if (abortSignal) {
+      if (abortSignal.aborted) {
+        handleAbort();
+      } else {
+        abortSignal.addEventListener('abort', handleAbort);
+      }
+    }
+
+    if (child.stdout) {
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', (chunk) => {
+        stdout += chunk;
+      });
+    }
+
+    if (child.stderr) {
+      child.stderr.setEncoding('utf8');
+      child.stderr.on('data', (chunk) => {
+        stderr += chunk;
+      });
+    }
+
+    if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+      timeoutId = setTimeout(() => {
+        killChild();
+        settle(() => {
+          reject(new Error(`Command timed out after ${timeoutMs} ms`));
+        });
+      }, timeoutMs);
+    }
+
+    child.on('error', (error) => {
+      settle(() => {
+        reject(error);
+      });
+    });
+
+    child.on('close', (code) => {
+      settle(() => {
+        resolve({
+          code: typeof code === 'number' ? code : 0,
+          stdout,
+          stderr,
+        });
+      });
+    });
+  });
 }
 
 export {
