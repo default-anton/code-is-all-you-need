@@ -1,13 +1,13 @@
 import { performance } from 'node:perf_hooks';
-import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { getQuickJS, shouldInterruptAfterDeadline } from 'quickjs-emscripten';
 
-import { createTodoManager } from '../todo-manager.js';
+import { createWorkspaceSdk } from '../workspace-sdk.js';
 
-const projectRoot = process.cwd();
-const todoManager = createTodoManager({ withDeadline });
+const repoRoot = process.cwd();
+const workspaceRoot = path.join(repoRoot, 'workspace');
+const workspaceSdk = createWorkspaceSdk({ workspaceRoot, withDeadline });
 let quickjsModulePromise = null;
 
 async function executeCodeBlock(source, timeoutMs) {
@@ -15,6 +15,16 @@ async function executeCodeBlock(source, timeoutMs) {
   const quickjs = await loadQuickjsModule();
   const vm = quickjs.newContext();
   const deadlineInfo = createDeadlineInfo(timeoutMs);
+  const pendingSdkOperations = new Set();
+  const trackSdkOperation = (promise) => {
+    if (!promise || typeof promise.then !== 'function') {
+      return;
+    }
+    const tracked = promise.finally(() => {
+      pendingSdkOperations.delete(tracked);
+    });
+    pendingSdkOperations.add(tracked);
+  };
   const start = performance.now();
 
   try {
@@ -25,7 +35,7 @@ async function executeCodeBlock(source, timeoutMs) {
     }
 
     installConsole(vm, logs);
-    installSdk(vm, deadlineInfo);
+    installSdk(vm, deadlineInfo, trackSdkOperation);
 
     const program = wrapUserSource(source);
     const evalResult = vm.evalCode(program, { filename: 'code-loop-block.js' });
@@ -74,6 +84,7 @@ async function executeCodeBlock(source, timeoutMs) {
       durationMs,
     };
   } finally {
+    await waitForPendingOperations(pendingSdkOperations);
     vm.dispose();
   }
 }
@@ -143,92 +154,45 @@ function installConsole(vm, logs) {
   consoleHandle.dispose();
 }
 
-function installSdk(vm, deadlineInfo) {
+function installSdk(vm, deadlineInfo, trackPendingOperation = () => {}) {
   const sdkHandle = vm.newObject();
 
-  const projectRootHandle = vm.newString(projectRoot);
+  const projectRootHandle = vm.newString(workspaceSdk.projectRoot);
   vm.setProp(sdkHandle, 'projectRoot', projectRootHandle);
   projectRootHandle.dispose();
 
   defineAsyncFunction(vm, sdkHandle, 'readFile', async ([maybePath]) => {
-    if (typeof maybePath !== 'string' || !maybePath) {
-      throw new Error('readFile requires a path argument.');
-    }
-    const absolute = resolvePath(maybePath);
-    return withDeadline(fs.readFile(absolute, 'utf8'), deadlineInfo, 'readFile');
-  });
+    return workspaceSdk.readFile(maybePath, deadlineInfo);
+  }, trackPendingOperation);
 
   defineAsyncFunction(vm, sdkHandle, 'writeFile', async ([maybePath, contents = '']) => {
-    if (typeof maybePath !== 'string' || !maybePath) {
-      throw new Error('writeFile requires a path argument.');
-    }
-    const absolute = resolvePath(maybePath);
-    const text = typeof contents === 'string' ? contents : stringify(contents);
-    await withDeadline(fs.mkdir(path.dirname(absolute), { recursive: true }), deadlineInfo, 'writeFile');
-    await withDeadline(fs.writeFile(absolute, text, 'utf8'), deadlineInfo, 'writeFile');
-    return `Wrote ${text.length} characters to ${path.relative(projectRoot, absolute)}`;
-  });
+    return workspaceSdk.writeFile(maybePath, contents, deadlineInfo);
+  }, trackPendingOperation);
 
   defineAsyncFunction(vm, sdkHandle, 'listFiles', async ([maybePath]) => {
-    const relativePath = typeof maybePath === 'string' && maybePath.length ? maybePath : '.';
-    const absolute = resolvePath(relativePath);
-    const entries = await withDeadline(fs.readdir(absolute, { withFileTypes: true }), deadlineInfo, 'listFiles');
-    return entries.map((entry) => ({
-      name: entry.name,
-      kind: entry.isDirectory() ? 'directory' : 'file',
-    }));
-  });
+    return workspaceSdk.listFiles(maybePath, deadlineInfo);
+  }, trackPendingOperation);
 
-  defineAsyncFunction(vm, sdkHandle, 'fetch', async ([url]) => {
-    if (typeof url !== 'string' || !url) {
-      throw new Error('fetch requires a url argument.');
-    }
-    const controller = deadlineInfo ? new AbortController() : null;
-    const response = await withDeadline(
-      fetch(url, controller ? { signal: controller.signal } : undefined),
-      deadlineInfo,
-      'fetch',
-      { abortController: controller },
-    );
-    if (!response.ok) {
-      throw new Error(`Request failed with status ${response.status}`);
-    }
-    return withDeadline(response.json(), deadlineInfo, 'fetch', { abortController: controller });
-  });
-
-  defineAsyncFunction(vm, sdkHandle, 'createTodo', async ([payload]) => {
-    return todoManager.createTodo(payload, deadlineInfo);
-  });
-
-  defineAsyncFunction(vm, sdkHandle, 'getTodo', async ([maybeId]) => {
-    return todoManager.getTodo(maybeId, deadlineInfo);
-  });
-
-  defineAsyncFunction(vm, sdkHandle, 'listTodos', async () => {
-    return todoManager.listTodos(deadlineInfo);
-  });
-
-  defineAsyncFunction(vm, sdkHandle, 'updateTodo', async ([maybeId, patch]) => {
-    return todoManager.updateTodo(maybeId, patch, deadlineInfo);
-  });
-
-  defineAsyncFunction(vm, sdkHandle, 'deleteTodo', async ([maybeId]) => {
-    return todoManager.deleteTodo(maybeId, deadlineInfo);
-  });
-
-  defineAsyncFunction(vm, sdkHandle, 'searchTodos', async ([criteria]) => {
-    return todoManager.searchTodos(criteria, deadlineInfo);
-  });
+  defineAsyncFunction(vm, sdkHandle, 'deletePath', async ([maybePath]) => {
+    return workspaceSdk.deletePath(maybePath, deadlineInfo);
+  }, trackPendingOperation);
 
   vm.setProp(vm.global, 'sdk', sdkHandle);
   sdkHandle.dispose();
 }
 
-function defineAsyncFunction(vm, targetHandle, name, handler) {
+function defineAsyncFunction(vm, targetHandle, name, handler, trackPendingOperation = () => {}) {
   const fnHandle = vm.newFunction(name, (...handles) => {
     const args = handlesToNativeValues(vm, handles);
     const deferred = vm.newPromise();
-    deferred.settled.then(() => vm.runtime.executePendingJobs());
+    const settlement = deferred.settled.then(() => {
+      try {
+        vm.runtime.executePendingJobs();
+      } finally {
+        deferred.dispose();
+      }
+    });
+    trackPendingOperation(settlement);
 
     (async () => {
       try {
@@ -390,11 +354,11 @@ function createTimeoutError(contextLabel, timeoutMs) {
   return new Error(`${contextLabel ?? 'Execution'} timed out${suffix}`);
 }
 
-function resolvePath(relativePath) {
-  if (!relativePath) {
-    return projectRoot;
+async function waitForPendingOperations(pendingOperations) {
+  if (!pendingOperations || pendingOperations.size === 0) {
+    return;
   }
-  return path.isAbsolute(relativePath) ? relativePath : path.join(projectRoot, relativePath);
+  await Promise.allSettled([...pendingOperations]);
 }
 
 function stringify(value) {
