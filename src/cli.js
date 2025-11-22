@@ -2,7 +2,7 @@ import 'dotenv/config';
 import readline from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
 
-import { SYSTEM_PROMPT } from './prompts.js';
+import { systemPrompt } from './prompts.js';
 import { theme } from './ui/theme.js';
 import { parseCliArgs, printHelp } from './options.js';
 import { AgentSession } from './agent/session.js';
@@ -19,7 +19,7 @@ export async function run() {
 
   console.log(`${theme.heading('Model:')} ${theme.strong(options.model)}`);
 
-  const session = new AgentSession({ ...options, systemPrompt: SYSTEM_PROMPT });
+  const session = new AgentSession({ ...options, systemPrompt: systemPrompt() });
 
   let activeReadline = null;
   const registerReadline = (rl) => {
