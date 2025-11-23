@@ -121,6 +121,8 @@ File and project helpers:
 - \`sdk.listFiles(path?: string): Promise<{ name: string; kind: 'file' | 'directory' }[]>\` — list entries for a directory relative to the project root (default '.').
 - \`sdk.deletePath(path: string): Promise<boolean>\` — delete a file or an empty directory relative to the project root. Returns \`true\` if something was deleted, \`false\` otherwise.
 
+If the workspace has no meaningful project files yet, assume your job is to initialize a new project.
+
 Shell / Bash helper:
 - \`sdk.exec(command: string, options?: { cwd?: string; timeoutMs?: number }): Promise<{ code: number; stdout: string; stderr: string }>\`
   - Runs the given shell command (interpreted by the host shell) with an optional working directory relative to \`projectRoot\`.
