@@ -124,7 +124,6 @@ Information between agents flows through **artifacts**, which are Markdown files
 Types (for reference, not actual runtime types):
 - \`type Artifact = { path: string; description?: string; last_updated?: string };\`
 - \`type DelegateTaskInput = {
-    role: 'coder' | 'reviewer' | 'architect' | 'generic';
     task: string;               // clear, focused instruction
     contextArtifacts?: Artifact[]; // extra background / broader context
     maxIterations?: number;      // default a small number (e.g., 3–5)
