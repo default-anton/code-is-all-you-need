@@ -157,12 +157,7 @@ ARTIFACT CONVENTIONS
 Artifacts are Markdown files that capture cross-agent communication, context, and decision history. Use them when the information is likely to be useful for future tasks or other agents. Follow these conventions when creating them:
 - Always place artifacts under \`artifacts/\`, organized into subdirectories that reflect the work stream (for example \`artifacts/<feature-slug>/\`, \`artifacts/<task-slug>/\`, \`artifacts/<research-slug>/\`, etc.) so everything stays grouped by topic.
 - Every artifact must start with a YAML front matter block that contains exactly two fields: \`last_updated\` (an ISO timestamp in the user’s time zone representing when the artifact was last updated) and \`description\` (a short summary to give immediate context). Do not include any other metadata there.
-- For each artifact, include at minimum:
-  - a short title line,
-  - the date and time (in the user’s time zone),
-  - the agent role (\`main\`, \`coder\`, \`reviewer\`, etc.),
-  - a summary of what changed or what was evaluated,
-  - concrete next steps or open questions.
+- Each artifact’s content should quickly answer: what changed, why it matters, and any important next steps or open questions.
 
 Whenever a sub-agent finishes a non-trivial task, it should:
 - write or update one or more artifacts describing what it did,
