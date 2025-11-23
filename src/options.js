@@ -1,7 +1,8 @@
 import {
+  DEFAULT_DELEGATE_MODEL,
   DEFAULT_EXEC_TIMEOUT,
+  DEFAULT_MAIN_AGENT_MODEL,
   DEFAULT_MAX_ITERATIONS,
-  DEFAULT_MODEL,
 } from './config.js';
 import { theme } from './ui/theme.js';
 
@@ -16,7 +17,8 @@ function ensurePositiveInteger(value, fallback) {
 function parseCliArgs(argv) {
   const options = {
     prompt: null,
-    model: DEFAULT_MODEL,
+    mainAgentModel: DEFAULT_MAIN_AGENT_MODEL,
+    delegateModel: DEFAULT_DELEGATE_MODEL,
     maxIterations: DEFAULT_MAX_ITERATIONS,
     executionTimeoutMs: DEFAULT_EXEC_TIMEOUT,
     stream: true,
@@ -36,7 +38,9 @@ function parseCliArgs(argv) {
         i += 1;
         break;
       case '--model':
-        options.model = argv[i + 1] ?? options.model;
+      case '--main-model':
+      case '--main-agent-model':
+        options.mainAgentModel = argv[i + 1] ?? options.mainAgentModel;
         i += 1;
         break;
       case '--max-iterations':
@@ -90,7 +94,7 @@ function parseCliArgs(argv) {
 function printHelp() {
   const rows = [
     ['-p, --prompt <text>', 'Run a single-shot prompt and exit when no more code blocks'],
-    ['--model <model>', 'Override the OpenAI model ID'],
+    ['--main-model <model>', 'Override the main agent OpenAI model (alias --model)'],
     ['--max-iterations <n>', 'Cap the agent loop iterations (default 12)'],
     ['--timeout <ms>', 'Per-code-block execution timeout (default 8000)'],
     ['--no-stream', 'Disable token streaming'],

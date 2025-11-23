@@ -44,7 +44,7 @@ Usage: code-loop [options]
 
 Options:
   -p, --prompt <text>         Run a single-shot prompt and exit when no more code blocks
-  --model <model>            Override the OpenAI model ID (default gpt-5.1-codex-mini)
+  --main-model <model>       Override the main agent OpenAI model (default gpt-5.1; alias --model)
   --max-iterations <n>       Cap the agent loop iterations (default 12)
   --timeout <ms>             Per-code-block execution timeout (default 8000)
   --no-stream                Disable token streaming (falls back to buffered output)
@@ -55,7 +55,7 @@ Options:
   -h, --help                 Show this message
 ```
 
-Environment variables in `.env` (or your shell) can override the same knobs: `CODE_LOOP_MODEL`, `CODE_LOOP_MAX_ITERATIONS`, `CODE_LOOP_TIMEOUT_MS`, etc.
+Environment variables in `.env` (or your shell) can override the same knobs: `MAIN_AGENT_MODEL` controls the top-level model (default `gpt-5.1`), `CODE_LOOP_MODEL` sets the delegate/sub-agent model (default `gpt-5.1-codex-mini`), and `CODE_LOOP_MAX_ITERATIONS`, `CODE_LOOP_TIMEOUT_MS`, etc.
 
 ## Manual Agent Loop with the AI SDK
 

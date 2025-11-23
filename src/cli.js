@@ -17,11 +17,12 @@ export async function run() {
 
   assertApiKey();
 
-  console.log(`${theme.heading('Model:')} ${theme.strong(options.model)}`);
+  console.log(`${theme.heading('Model:')} ${theme.strong(options.mainAgentModel)}`);
 
   const delegateTaskHandler = createDelegateTaskHandler(options);
   const session = new AgentSession({
     ...options,
+    model: options.mainAgentModel,
     systemPrompt: systemPrompt(),
     delegateTaskHandler,
   });
@@ -104,6 +105,7 @@ function createDelegateTaskHandler(baseOptions) {
     console.log(`${theme.label('task>')} ${headline}`);
     const delegateSession = new AgentSession({
       ...sanitizedBase,
+      model: sanitizedBase.delegateModel,
       prompt: null,
       systemPrompt: systemPrompt({ mainAgent: false }),
       maxIterations: normalizedInput.maxIterations,
