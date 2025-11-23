@@ -34,6 +34,16 @@ class AgentSession {
     return this.loop();
   }
 
+  getLastAssistantMessage() {
+    for (let index = this.messages.length - 1; index >= 0; index -= 1) {
+      const candidate = this.messages[index];
+      if (candidate.role === 'assistant') {
+        return coerceContentToText(candidate.content).trim();
+      }
+    }
+    return '';
+  }
+
   async loop() {
     let iteration = 0;
     while (iteration < this.options.maxIterations) {
