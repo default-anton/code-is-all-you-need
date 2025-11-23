@@ -10,7 +10,7 @@ const workspaceRoot = path.join(repoRoot, 'workspace');
 const workspaceSdk = createWorkspaceSdk({ workspaceRoot, withDeadline });
 let quickjsModulePromise = null;
 
-async function executeCodeBlock(source, timeoutMs) {
+async function executeCodeBlock(source, timeoutMs, sandboxOptions = {}) {
   const logs = [];
   const quickjs = await loadQuickjsModule();
   const vm = quickjs.newContext();
@@ -35,7 +35,7 @@ async function executeCodeBlock(source, timeoutMs) {
     }
 
     installConsole(vm, logs);
-    installSdk(vm, deadlineInfo, trackSdkOperation);
+    installSdk(vm, deadlineInfo, trackSdkOperation, sandboxOptions);
 
     const program = wrapUserSource(source);
     const evalResult = vm.evalCode(program, { filename: 'code-loop-block.js' });
@@ -154,7 +154,7 @@ function installConsole(vm, logs) {
   consoleHandle.dispose();
 }
 
-function installSdk(vm, deadlineInfo, trackPendingOperation = () => {}) {
+function installSdk(vm, deadlineInfo, trackPendingOperation = () => {}, sandboxOptions = {}) {
   const sdkHandle = vm.newObject();
 
   const projectRootHandle = vm.newString(workspaceSdk.projectRoot);
@@ -180,6 +180,17 @@ function installSdk(vm, deadlineInfo, trackPendingOperation = () => {}) {
   defineAsyncFunction(vm, sdkHandle, 'exec', async ([command, execOptions]) => {
     return workspaceSdk.exec(command, execOptions, deadlineInfo);
   }, trackPendingOperation);
+
+  if (typeof sandboxOptions.delegateTaskHandler === 'function') {
+    defineAsyncFunction(vm, sdkHandle, 'delegateTask', async ([rawInput]) => {
+      const payload = rawInput ?? {};
+      return withDeadline(
+        Promise.resolve().then(() => sandboxOptions.delegateTaskHandler(payload)),
+        deadlineInfo,
+        'sdk.delegateTask',
+      );
+    }, trackPendingOperation);
+  }
 
   vm.setProp(vm.global, 'sdk', sdkHandle);
   sdkHandle.dispose();

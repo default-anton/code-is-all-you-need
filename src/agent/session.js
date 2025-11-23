@@ -14,8 +14,14 @@ class AgentSession {
         content: options.systemPrompt,
       },
     ];
+    const toolOptions = {
+      ...options,
+      delegateTaskHandler: typeof options.delegateTaskHandler === 'function'
+        ? options.delegateTaskHandler
+        : null,
+    };
     this.tools = {
-      runJavascript: createRunJavascriptTool(options),
+      runJavascript: createRunJavascriptTool(toolOptions),
     };
   }
 
@@ -282,6 +288,9 @@ function formatJson(value) {
 }
 
 function createRunJavascriptTool(options) {
+  const delegateTaskHandler = typeof options.delegateTaskHandler === 'function'
+    ? options.delegateTaskHandler
+    : null;
   return tool({
     description: 'Execute JavaScript inside the project workspace using a sandboxed QuickJS runtime.',
     inputSchema: z.object({
@@ -302,7 +311,10 @@ function createRunJavascriptTool(options) {
         ? Math.floor(timeoutMs)
         : options.executionTimeoutMs;
 
-      const result = await executeCodeBlock(code, effectiveTimeout);
+      const sandboxOptions = delegateTaskHandler
+        ? { delegateTaskHandler }
+        : {};
+      const result = await executeCodeBlock(code, effectiveTimeout, sandboxOptions);
       logExecution(result);
       const payload = {
         success: result.success,
