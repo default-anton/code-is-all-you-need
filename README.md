@@ -1,143 +1,77 @@
 # code-is-all-you-need
 
-A tiny CLI that lets GPT-style models drive a JavaScript sandbox instead of emitting structured tool calls. The loop is powered by the [AI SDK](https://ai-sdk.dev/docs/introduction) so the model streams tokens, decides when to run code, and sees the execution traces as part of the next turn.
+`code-loop` is a slim CLI that lets LLMs stream thoughts, decide when to execute code, and see the resulting traces on the next turn. Instead of rigid tool schemas the agent gets a single `runJavascript` tool hooked up to a QuickJS sandbox plus a tiny file/system SDK.
 
-## Why
+## Highlights
 
-- **Full control flow:** The model can branch, loop, and compose helper calls because it emits raw JavaScript.
-- **Simple surface area:** We expose a lightweight SDK (`sdk.*` functions) instead of rigid tool schemas.
-- **Deterministic sandbox:** Every code block runs inside a fresh QuickJS context provided by [quickjs-emscripten](https://github.com/justjake/quickjs-emscripten). The WASM module is loaded in-process, so there is no external Wasmtime dependency and nothing persists across executions unless the model writes to disk.
-- **Manual agent loop:** We own the entire turn-taking logic (inspired by the AI SDK docs) which lets us bolt on custom logging, safety rails, or termination rules.
+- Manual AI SDK loop: `streamText` drives the conversation, with live “Reasoning / Response / Tool” panels in the terminal UI.
+- Deterministic QuickJS runtime: every code fence runs inside a fresh context with a 30‑minute default timeout and buffered console capture.
+- Workspace-scoped SDK: helpers such as `sdk.readFile`, `writeFile`, `listFiles`, `deletePath`, and `exec` only operate inside `workspace/`, so the agent can inspect or mutate files without escaping the project root.
+- Delegation built-in: `sdk.delegateTask` spawns sub-agents that share the same system prompt and SDK but cannot re-delegate, making executor/reviewer loops easy to orchestrate.
+- No build step: everything is plain ESM JavaScript and ships with `quickjs-emscripten`, so `npm install` fetches the WASM runtime automatically.
 
-## Quick Start
+## Setup
 
 ```bash
-# 1. Install deps
 npm install
-
-# 2. Configure credentials
 cp .env.example .env
-$EDITOR .env   # set OPENAI_API_KEY
+$EDITOR .env   # set OPENAI_API_KEY=sk-live-...
+```
 
-# 3. Launch the CLI (interactive by default)
+- Node.js ≥ 20.11 is required (native `fetch`, `readline/promises`, AbortController in Node streams).
+- Optional overrides live in `.env` (`MAIN_AGENT_MODEL`, `CODE_LOOP_MODEL`, `CODE_LOOP_MAX_ITERATIONS`, `CODE_LOOP_TIMEOUT_MS`, `CODE_LOOP_REASONING`, `CODE_LOOP_VERBOSITY`, `CODE_LOOP_TEMPERATURE`, `CODE_LOOP_MAX_OUTPUT`).
+
+## Run It
+
+Interactive loop (default):
+
+```bash
 npm start
 ```
 
-Interactive mode keeps a running conversation. Type `:exit` or `:q` to bail. The assistant streams tokens, and whenever it sends one or more ```js code fences, each block is executed sequentially in QuickJS. The return value + console output are appended to the next user turn so the agent can keep iterating.
-
-> ℹ️ The QuickJS WebAssembly bundle ships with `quickjs-emscripten`, so `npm install` is all you need. The CLI lazily initializes the runtime the first time a code block needs to execute.
-
-### Single-Shot Mode (`--prompt`/`-p`)
-
-Use the flag when you want to fire a single prompt and stop as soon as the model sends a plain-text answer (i.e., no more code blocks to run):
+Single-shot run that exits after the first plain-text answer (handy for scripts or quick checks):
 
 ```bash
-code-loop --prompt "Summarize src/cli.js"
+npm start -- --prompt "Your prompt here"
 ```
 
-If the model emits code, the CLI executes it, feeds back the result, and keeps looping until a non-code response arrives. If the very first reply has no code block, the process exits immediately after printing the answer, matching the requirement in the prompt.
+You can also call the binary directly (`node ./bin/code-loop.js ...`) or install it globally to use `code-loop`.
 
-## CLI Flags
+## CLI Knobs
 
-```
-Usage: code-loop [options]
+| Flag | Default | Purpose |
+| --- | --- | --- |
+| `-p, --prompt <text>` | – | Run once, exit after a non-code reply. |
+| `--main-model <id>` / `--model` | `gpt-5.1` | Override the primary agent model. |
+| `--max-iterations <n>` | `100` | Hard stop for the manual loop (applies to both interactive and prompt mode). |
+| `--timeout <ms>` | `1800000` (30 min) | Per code block execution cap. |
+| `--no-stream` | streaming on | Disable live reasoning/response output; print buffered text after each turn. |
+| `--reasoning <low|medium|high>` | `medium` | Passed through to OpenAI provider options. |
+| `--verbosity <low|medium|high>` | `low` | Provider verbosity hint. |
+| `--temperature <float>` | `0` | Sampling temperature for both main and delegate agents. |
+| `--max-output-tokens <n>` | `1024` | Cap on model tokens per turn. |
+| `-h, --help` | – | Print the flag list and exit. |
 
-Options:
-  -p, --prompt <text>         Run a single-shot prompt and exit when no more code blocks
-  --main-model <model>       Override the main agent OpenAI model (default gpt-5.1; alias --model)
-  --max-iterations <n>       Cap the agent loop iterations (default 12)
-  --timeout <ms>             Per-code-block execution timeout (default 8000)
-  --no-stream                Disable token streaming (falls back to buffered output)
-  --reasoning <level>        Hint for OpenAI's reasoning effort (default medium)
-  --verbosity <level>        Hint for reasoning verbosity (default medium)
-  --temperature <value>      Sampling temperature (default 0)
-  --max-output-tokens <n>    Upper bound for model tokens (default 1024)
-  -h, --help                 Show this message
-```
+The same settings respect their `.env` / environment equivalents, so you can keep personal defaults without touching scripts.
 
-Environment variables in `.env` (or your shell) can override the same knobs: `MAIN_AGENT_MODEL` controls the top-level model (default `gpt-5.1`), `CODE_LOOP_MODEL` sets the delegate/sub-agent model (default `gpt-5.1-codex-mini`), and `CODE_LOOP_MAX_ITERATIONS`, `CODE_LOOP_TIMEOUT_MS`, etc.
+## Sandbox & SDK
 
-## Manual Agent Loop with the AI SDK
-
-The core of `src/cli.js` is a handcrafted loop over `streamText`. We keep the full conversation history, stream deltas for UX, and detect whether the last assistant turn contained code blocks.
-
-```ts
-import { streamText } from 'ai';
-import { openai } from '@ai-sdk/openai';
-
-const result = streamText({
-  model: openai(modelId),
-  messages,
-  providerOptions: {
-    openai: {
-      reasoningEffort: 'medium',
-      verbosity: 'medium',
-    },
-  },
-});
-
-for await (const chunk of result.fullStream) {
-  if (chunk.type === 'text-delta') {
-    process.stdout.write(chunk.text);
-  }
-}
-
-const responseMessages = (await result.response).messages;
-messages.push(...responseMessages);
-```
-
-From there we:
-
-1. Parse any ```js fences with a regex.
-2. Execute each block in a `vm` sandbox (fresh context, limited globals).
-3. Build a structured execution summary and push it back into `messages` as a user turn.
-4. Repeat until there are no more code blocks or we hit `--max-iterations`.
-
-This mirrors the "Manual Agent Loop" pattern from the AI SDK documentation but swaps tool calls for JavaScript execution.
-
-## Sandbox Contract & Runtime
-
-Code blocks execute inside QuickJS (via quickjs-emscripten) with host functions wired directly into the VM. Each helper runs in Node.js, resolves a QuickJS promise, and pumps `runtime.executePendingJobs()` so `await` works naturally inside the sandbox. The agent now behaves like a native to-do assistant, so the system prompt only advertises the following helpers:
-
-| Helper | Description |
-| --- | --- |
-| `sdk.createTodo(input)` | Create a todo `{ title, description?, done?, tags?, dueDate? }` and persist it to `data/todos.json`.
-| `sdk.getTodo(id)` | Load a single todo by id (returns `null` when missing).
-| `sdk.listTodos()` | Return every stored todo sorted by insertion order.
-| `sdk.updateTodo(id, patch)` | Merge partial fields into an existing todo and refresh `updatedAt`.
-| `sdk.deleteTodo(id)` | Remove a todo and return `true` when something was deleted.
-| `sdk.searchTodos(criteria)` | Filter todos by text/tag/done criteria.
-
-Each todo includes `{ id, title, description, done, tags[], dueDate|null, createdAt, updatedAt }` and lives in `data/todos.json` (directories are created on demand, so the filesystem doubles as our datastore).
-
-For local development we still expose the generic helpers below—they remain available to the sandbox but stay hidden from the agent so it focuses on task management:
-
-| Helper | Description |
-| --- | --- |
-| `sdk.projectRoot` | Absolute path to the repo root (read-only string).
-| `sdk.readFile(path)` | Reads UTF-8 text relative to the project root (uses `fs.promises.readFile`).
-| `sdk.writeFile(path, contents)` | Writes UTF-8 text (directories auto-created) and returns a status string.
-| `sdk.listFiles(path = '.')` | Lists files/directories for inspection (returns `{ name, kind }[]`).
-| `sdk.fetch(url)` | Fetches JSON via Node's native `fetch`, with the CLI enforcing the per-block timeout.
-
-Console calls (`console.log`, `.warn`, `.error`) are captured and echoed back after each execution. The CLI enforces a configurable timeout per block (default 8s) so runaway loops fail fast, and `quickjs-emscripten`'s interrupt handler cuts off busy loops without needing an external process. See the [quickjs-emscripten docs](https://raw.githubusercontent.com/justjake/quickjs-emscripten/refs/heads/main/README.md) for more background on the runtime we embed.
+- **Tool surface:** The agent only has `runJavascript({ code, timeoutMs? })`. Each run spins up a new QuickJS context, evaluates the async IIFE you provide, captures console output, prettifies the return value, and feeds the transcript to the next model turn.
+- Every code block starts from a clean VM, so persist anything important via the filesystem (the default workspace is `workspace/` under the repo root).
 
 ## Project Layout
 
-```
-.
-├── bin/code-loop.js      # CLI entry point / shebang
-├── src/cli.js            # Manual agent loop + sandbox runtime
-├── .env.example          # Configuration template
-├── package.json / lock   # Dependencies (ai, @ai-sdk/openai, quickjs-emscripten, zod, dotenv)
-└── README.md
-```
+- `bin/code-loop.js` – shebang entry; wires CLI args to `src/cli.js`.
+- `src/cli.js` – orchestrates interactive vs prompt mode, handles Ctrl‑C, and wires delegate handlers.
+- `src/agent/session.js` – manual agent loop, reasoning renderer, `runJavascript` tool wiring.
+- `src/runtime/quickjs-runner.js` – QuickJS lifecycle, console shim, deadline enforcement, execution logging.
+- `src/workspace-sdk.js` – filesystem and `exec` helpers scoped to `workspace/`.
+- `src/options.js` / `src/config.js` – flag parsing plus default resolution.
+- `src/prompts.js` – multi-role system prompt generator (main agent vs delegate).
+- `src/ui/theme.js` – ANSI color helpers and styling presets.
 
 ## Development Notes
 
-- Requires Node 20.11+ (for native `fetch`, `readline/promises`, and newer V8 features).
-- `npm start` proxies to `node ./bin/code-loop.js`.
-- The repo intentionally skips a build step—everything is plain ESM JavaScript.
-- If you want to extend the sandbox, add new helpers inside `createSandboxApi` and describe them in the system prompt so the model knows they exist.
-
-Happy hacking!
+- `npm start` proxies to `node ./bin/code-loop.js`; `npm run dev` enables source maps and leaves `NODE_ENV=development`.
+- QuickJS lazy-loads on the first execution, so the initial code block will incur a short module load; subsequent runs reuse the same WASM module.
+- Extend the SDK by editing `src/runtime/quickjs-runner.js` (for sandbox wiring) and `src/workspace-sdk.js` (for host capabilities), then document the new helper in the system prompt so agents know it exists.
