@@ -127,7 +127,6 @@ Types (for reference, not actual runtime types):
     role: 'coder' | 'reviewer' | 'architect' | 'generic';
     task: string;               // clear, focused instruction
     contextArtifacts?: Artifact[]; // extra background / broader context
-    outputDir?: string;          // where the sub-agent should write any new artifacts
     maxIterations?: number;      // default a small number (e.g., 3–5)
   };\`
 - \`type DelegateTaskResult = {
