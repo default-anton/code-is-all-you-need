@@ -393,24 +393,7 @@ function stringify(value) {
   }
 }
 
-function formatExecutionFeedback(result) {
-  const header = result.success
-    ? `Execution result (Duration ${result.durationMs.toFixed(1)} ms)`
-    : `Execution error (Duration ${result.durationMs.toFixed(1)} ms)`;
-
-  const consoleSection = result.logs.length
-    ? result.logs.map((log) => `[${log.level}] ${log.text}`).join('\n')
-    : '(no console output)';
-
-  if (result.success) {
-    return `${header}\nReturn Value:\n${result.formattedValue}\nConsole:\n${consoleSection}`;
-  }
-
-  return `${header}\nError: ${result.errorMessage}\nStack: ${result.errorStack ?? 'n/a'}\nConsole:\n${consoleSection}`;
-}
-
 export {
   executeCodeBlock,
-  formatExecutionFeedback,
   withDeadline,
 };

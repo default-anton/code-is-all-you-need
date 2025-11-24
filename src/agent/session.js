@@ -2,7 +2,7 @@ import { streamText, tool } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { z } from 'zod';
 
-import { executeCodeBlock, formatExecutionFeedback } from '../runtime/quickjs-runner.js';
+import { executeCodeBlock } from '../runtime/quickjs-runner.js';
 import { theme } from '../ui/theme.js';
 
 class AgentSession {
@@ -311,10 +311,9 @@ function createRunJavascriptTool(options) {
       success: z.boolean(),
       durationMs: z.number(),
       logs: z.array(z.object({ level: z.string(), text: z.string() })),
-      formattedValue: z.string().nullable().optional(),
+      value: z.string().nullable().optional(),
       errorMessage: z.string().optional(),
       errorStack: z.string().nullable().optional(),
-      feedback: z.string(),
     }),
     execute: async ({ code, timeoutMs }) => {
       const effectiveTimeout = Number.isFinite(timeoutMs) && timeoutMs > 0
@@ -330,10 +329,10 @@ function createRunJavascriptTool(options) {
         success: result.success,
         durationMs: result.durationMs,
         logs: result.logs,
-        formattedValue: result.formattedValue ?? null,
-        feedback: formatExecutionFeedback(result),
       };
-      if (!result.success) {
+      if (result.success) {
+        payload.value = result.value;
+      } else {
         payload.errorMessage = result.errorMessage;
         payload.errorStack = result.errorStack ?? null;
       }
